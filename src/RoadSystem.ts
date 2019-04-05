@@ -1,7 +1,6 @@
 import {vec2, vec4, mat4} from 'gl-matrix';
 import Turtle from './Turtle';
-import {floor, fbmWorley} from './globals';
-import { on } from 'cluster';
+import {floor, fbmWorley, random1, random2} from './globals';
 
 class Road {
     a : vec2;
@@ -118,10 +117,11 @@ function roadsInt(r1: Road, r2: Road) {
 class RoadSystem {
     width : number;
     height : number;
-    stepSize : number;
+    highSize : number;
     highwayAngle : number;
     highwayDensity : number;
     roadSize : number;
+    seed : number;
 
     turtle : Turtle;
     stack : Turtle[];
@@ -129,8 +129,9 @@ class RoadSystem {
     //Arrays to keep track of map
     //Grid unit of 1
     roads : Road[][][];
+    occupied : boolean[][];
+    //Grid unit of highSize
     filled : boolean[][];
-    //Grid unit of stepSize
     highways : Road[][][];
     highwayIntersections : vec2[][][];
 
@@ -143,19 +144,19 @@ class RoadSystem {
     numRoads : number;
 
     toScreen(coord: vec2) : vec2 {
-        //Converts to [-1, 1]
+        //Converts to [-50, 50]
         vec2.divide(coord, coord, vec2.fromValues(this.width, this.height));
         vec2.scale(coord, coord, 2);
         vec2.subtract(coord, coord, vec2.fromValues(1, 1));
+        vec2.scale(coord, coord, 50);
         return coord;
     }
 
     terrain(coord: vec2) : number {
         //Computes same terrain value as flat shader
-        let fs_Pos: vec2 = this.toScreen(vec2.clone(coord));
-        //Computing terrain from fs_Pos
-        let terrain = 1 - fbmWorley(vec2.subtract(
-                                        vec2.create(), vec2.scale(vec2.create(), fs_Pos, 1 / 1.2), vec2.fromValues(0, 1)
+        let vs_Pos: vec2 = this.toScreen(vec2.clone(coord));
+        //Computing terrain from vs_Pos
+        let terrain = 1 - fbmWorley(vec2.add(vec2.create(), vec2.scale(vec2.create(), vs_Pos, 1 / 55),vec2.fromValues(1.45, 0)
                                     ), 8, 1.46);
         terrain = (terrain - 0.55) / 0.45;
         return terrain;
@@ -163,46 +164,51 @@ class RoadSystem {
     
     population(coord: vec2) : number {
         //Computes same population value as flat shader
-        let fs_Pos: vec2 = this.toScreen(vec2.clone(coord));
-        //Computing population from fs_Pos
-        let population = 1 - fbmWorley(vec2.scale(vec2.create(), fs_Pos, 2), 8, 3.2049);
+        let vs_Pos: vec2 = this.toScreen(vec2.clone(coord));
+        //Computing population from vs_Pos
+        let population = 1 - fbmWorley(vec2.scale(vec2.create(), vs_Pos, 12 / 250), 8, 3.2049);
         population = Math.pow(population, 2);
-        //Computes smoothstep(0.1, 0.8, population)
+        //Computes smoothstep(0.f, 0.8, population)
         population = Math.max(Math.min((population - 0.0) / (0.8 - 0.0), 1), 0);
         population = population * population * (3 - 2 * population);
+
         return population;
     }
 
     highIndex(coord: vec2) : vec2 {
         let t = vec2.create();
-        vec2.scale(t, coord, 1 / this.stepSize);
+        vec2.scale(t, coord, 1 / this.highSize);
         return floor(t);
     }
 
-    constructor(width: number, height: number, stepSize: number, hAngle: number, hDensity: number, rSize: number) {
+    constructor(width: number, height: number, hAngle: number, hDensity: number, rSize: number, seed: number) {
         this.width = width;
         this.height = height;
-        this.stepSize = stepSize;
+        this.highSize = width / 20;
         this.highwayAngle = hAngle;
         this.highwayDensity = hDensity;
         this.roadSize = rSize;
+        this.seed = seed;
         //Initialize turtle
         this.turtle = new Turtle();
+        this.turtle.color = vec4.fromValues(0.01, 0.01, 0.01, 1);
         //Initialize arrays
         this.stack = [];
         this.roads = [];
+        this.occupied = [];
         this.filled = [];
         this.highways = [];
         this.highwayIntersections = [];
         for(let i = 0; i < width; i++) {
             this.roads[i] = [];
-            this.filled[Math.floor(i / stepSize)] = [];
-            this.highways[Math.floor(i / stepSize)] = [];
-            this.highwayIntersections[Math.floor(i / stepSize)] = [];
+            this.occupied[i] = [];
+            this.filled[Math.floor(i / this.highSize)] = [];
+            this.highways[Math.floor(i / this.highSize)] = [];
+            this.highwayIntersections[Math.floor(i / this.highSize)] = [];
             for(let j = 0; j < height; j++) {
                 this.roads[i][j] = [];
-                this.highways[Math.floor(i / stepSize)][Math.floor(j / stepSize)] = [];
-                this.highwayIntersections[Math.floor(i / stepSize)][Math.floor(j / stepSize)] = [];
+                this.highways[Math.floor(i / this.highSize)][Math.floor(j / this.highSize)] = [];
+                this.highwayIntersections[Math.floor(i / this.highSize)][Math.floor(j / this.highSize)] = [];
             }
         }
         this.transform1Array = [];
@@ -217,11 +223,14 @@ class RoadSystem {
         //visualize CPU terrain
         this.turtle.scale = .5;
         this.turtle.orientation = vec2.fromValues(0, 1);
-        for(let i = 0; i < this.width / this.stepSize; i++) {
-            for(let j = 0; j < this.height / this.stepSize; j++) {
-                let pos = vec2.fromValues(i * this.stepSize, j * this.stepSize);
+        for(let i = 0; i < this.width; i++) {
+            for(let j = 0; j < this.height; j++) {
+                let pos = vec2.fromValues(i, j);
                 if(this.terrain(pos) >= 0) {
                     this.turtle.color = vec4.fromValues(0, 0.5, 0, 1);
+                    if(i % 10 == 0 || j % 10 == 0) {
+                        this.turtle.color = vec4.fromValues(0, 0, 1, 1);
+                    }
                     this.turtle.position = pos;
                     this.drawRoad(.5);
                 }
@@ -269,7 +278,7 @@ class RoadSystem {
                 }
             }
         }
-        if(minDist < this.stepSize / 3) {
+        if(minDist < this.highSize / 3) {
             this.turtle.orientation = o;
             return target;
         }
@@ -300,7 +309,7 @@ class RoadSystem {
                 }
             }
         }
-        if(minDist < this.stepSize / 2) {
+        if(minDist < this.highSize / 2) {
             this.turtle.orientation = o;
             let test = this.movePos(this.turtle, target);
             let index = this.highIndex(test);
@@ -442,17 +451,17 @@ class RoadSystem {
         //Towards population
         this.turtle.position = vec2.fromValues(this.width / 4, 5);
         this.turtle.orientation = vec2.fromValues(0, 1);
-        this.branch(this.stepSize);
+        this.branch(this.highSize);
         this.turtle.position = vec2.fromValues(this.width * 3 / 4, 5);
         this.turtle.orientation = vec2.fromValues(0, 1);
-        this.branch(this.stepSize);
+        this.branch(this.highSize);
         this.turtle.position = vec2.fromValues(this.width / 2, this.height / 2);
         this.turtle.orientation = vec2.fromValues(0, -1);
         this.pushBack();
-        this.branch(this.stepSize);
+        this.branch(this.highSize);
         while(true) {
-            this.orientPopulation(this.highwayAngle, this.stepSize);
-            let step = this.orientValid(60, this.stepSize);
+            this.orientPopulation(this.highwayAngle, this.highSize);
+            let step = this.orientValid(60, this.highSize);
             if(step) {
                 let c = this.checkHighwayIntersection(step);
                 if(c) {
@@ -464,9 +473,10 @@ class RoadSystem {
                     this.turtle = this.stack.pop();
                 } else {
                     this.drawHighway(step);
-                    if(Math.random() > 1 - this.highwayDensity) {
-                        this.branch(this.stepSize);
+                    if(random1(this.seed) > 1 - this.highwayDensity) {
+                        this.branch(this.highSize);
                     }
+                    this.seed++;
                 }
             } else {
                 if(this.stack.length == 0) {
@@ -480,15 +490,16 @@ class RoadSystem {
     startGrid() {
         //Grid structure
         this.turtle.scale = 0.2;
-        for(let x = 1; x < this.width / this.stepSize; x++) {
-            for(let y = 1; y < this.height / this.stepSize; y++) {
+        for(let x = 1; x < this.width / this.highSize; x++) {
+            for(let y = 1; y < this.height / this.highSize; y++) {
                 //If grid square is empty, start a perpendicular road system
                 if(!this.filled[x][y] && this.highways[x][y].length != 0) {
                     //If there's highways in this grid square, choose one at random
                     //And have our grid direction be perpendicular to it
                     
                     //Calculating start turtle position
-                    let h = this.highways[x][y][Math.floor(Math.random() * this.highways[x][y].length)];
+                    let h = this.highways[x][y][Math.floor(random1(this.seed) * this.highways[x][y].length)];
+                    this.seed++;
                     let start = vec2.scale(vec2.create(), vec2.add(vec2.create(), h.a, h.b), 0.5);
                     let slope: number;
                     if(h.b[0] - h.a[0] == 0) {
@@ -510,7 +521,7 @@ class RoadSystem {
                     this.stack = [];
                     while(cont && incr < 1000) {
                         incr++;
-                        let mmm = this.checkGridRoad(this.stepSize * this.roadSize / 5);
+                        let mmm = this.checkGridRoad(this.highSize * this.roadSize / 5);
                         if(mmm) {
                             this.drawGridRoad(mmm);
                             if(this.stack.length == 0) {
@@ -520,8 +531,8 @@ class RoadSystem {
                                 count++;
                             }
                         } else {
-                            if(this.checkValid(this.movePos(this.turtle, this.stepSize * this.roadSize / 5))) {
-                                this.drawGridRoad(this.stepSize * this.roadSize / 5);
+                            if(this.checkValid(this.movePos(this.turtle, this.highSize * this.roadSize / 5))) {
+                                this.drawGridRoad(this.highSize * this.roadSize / 5);
                                 if(this.onHighway()) {
                                     if(this.stack.length == 0) {
                                         cont = false;
@@ -529,8 +540,11 @@ class RoadSystem {
                                         this.turtle = this.stack.pop();
                                         count++;
                                     }
-                                } else if(Math.random() > 0.5) {
-                                    this.branch(this.stepSize * this.roadSize / 5);
+                                } else if(random1(this.seed) > 0.5) {
+                                    this.seed++;
+                                    this.branch(this.highSize * this.roadSize / 5);
+                                } else {
+                                    this.seed++;
                                 }
                             } else {
                                 if(this.stack.length == 0) {
@@ -542,8 +556,6 @@ class RoadSystem {
                             }
                         }
                     }
-                    console.log(x + " and " + y);
-                    console.log(count);
                 }
             }
         }
@@ -579,12 +591,19 @@ class RoadSystem {
 
     drawHighway(dist: number) {
         let index = this.highIndex(this.turtle.position);
+        let lowIndex = floor(this.turtle.position);
         this.highwayIntersections[index[0]][index[1]].push(vec2.clone(this.turtle.position));
         let prevIndex = vec2.create();
-        for(let i = 0; i <= dist; i += 0.5) {
+        let prevLowIndex = vec2.create();
+        for(let i = 0; i <= dist; i += 0.25) {
             let test = this.movePos(this.turtle, i);
+            lowIndex = floor(test);
             index = this.highIndex(test);
-            if(!vec2.equals(index, prevIndex)) {
+            if(this.checkValid(test) && !vec2.equals(lowIndex, prevLowIndex)) {
+                this.occupied[lowIndex[0]][lowIndex[1]] = true;
+                prevLowIndex = vec2.clone(lowIndex);
+            }
+            if(this.checkValid(test) && !vec2.equals(index, prevIndex)) {
                 this.highways[index[0]][index[1]].push(new Road(vec2.clone(this.turtle.position), this.movePos(this.turtle, dist)));
                 prevIndex = vec2.clone(index);
             }
@@ -602,6 +621,7 @@ class RoadSystem {
             index = floor(test);
             highIndex = this.highIndex(test);
             if(this.checkValid(test) && !vec2.equals(index, prevIndex)) {
+                this.occupied[index[0]][index[1]] = true;
                 this.roads[index[0]][index[1]].push(new Road(vec2.clone(this.turtle.position), this.movePos(this.turtle, dist)));
                 prevIndex = vec2.clone(index);
             }
@@ -644,6 +664,56 @@ class RoadSystem {
         this.numRoads++;
 
         this.turtle.forward(dist);
+    }
+
+    generatePoints(n: number) {
+        let seed = 0;
+        let points : vec2[] = [];
+        for(let i = 0; i < n; i++) {
+            let point;
+            let x = 0;
+            for(; x < 1000; x++) {
+                point = random2(vec2.fromValues(2.3, 4.5), vec2.fromValues(6.7, seed));
+                point = vec2.fromValues(Math.floor(point[0] * this.width), 
+                                        Math.floor(point[1] * this.height));
+                seed++;
+                if(this.terrain(point) >= 0 && !this.occupied[point[0]][point[1]]) {
+                    this.occupied[point[0]][point[1]] = true;
+                    x = 1000;
+                }
+            }
+            if(x == 1000) {
+                break;
+            }
+            points.push(vec2.add(vec2.create(), point, vec2.fromValues(0.5, 0.5)));
+        }
+        return points;
+    }
+
+    pointsTest() {
+        this.turtle.scale = 0.5;
+        this.turtle.orientation = vec2.fromValues(0, 1);
+        let points = this.generatePoints(500);
+        for(let i = 0; i < points.length; i++) {
+            let point = points[i];
+            this.turtle.color = vec4.fromValues(1, 0, 0, 1);
+            this.turtle.position = vec2.add(vec2.create(), point, vec2.fromValues(0, -0.25));
+            this.drawRoad(0.5);
+        }
+    }
+
+    occupiedTest() {
+        this.turtle.scale = 1;
+        this.turtle.orientation = vec2.fromValues(0, 1);
+        for(let i = 0; i < this.width; i++) {
+            for(let j = 0; j < this.height; j++) {
+                if(this.occupied[i][j]) {
+                    this.turtle.color = vec4.fromValues(1, 1, 1, 1);
+                    this.turtle.position = vec2.fromValues(i + 0.5, j);
+                    this.drawRoad(1);
+                }
+            }
+        }
     }
 };
 

@@ -1,12 +1,13 @@
 #version 300 es
-precision highp float;
 
-uniform vec3 u_Eye, u_Ref, u_Up;
-uniform vec2 u_Dimensions;
-uniform float u_Time;
+uniform mat4 u_Model;
+uniform mat4 u_ModelInvTr;
+uniform mat4 u_ViewProj;
 
-in vec2 fs_Pos;
-out vec4 out_Col;
+in vec4 vs_Pos;
+
+out float terrain;
+out float population;
 
 vec2 random2( vec2 p , vec2 seed) {
   return fract(
@@ -53,11 +54,18 @@ float fbmWorley(vec2 pos, float octaves, float seed) {
   return total;
 }
 
-void main() {
-  vec3 target = vec3(0.7);
-  float p = (fs_Pos.x + 1.f) / 2.f;
-  target += vec3(0, 1.f - p, p) * 0.1;
-  target += vec3(0, 0.15, 0.2) * fbmWorley(fs_Pos * 2.f, 10.f, 0.84);
+void main()
+{
+    vec3 target = vec3(0);
+    terrain = 1.f - fbmWorley((vs_Pos.xz / 55.f) + vec2(1.45, 0), 8.f, 1.46);
+    terrain = (terrain - 0.55) / 0.45;
+    float height = smoothstep(-0.1, 0.05, terrain);
 
-  out_Col = vec4(target, 1.0);
+    population = 1.f - fbmWorley(vs_Pos.xz * 12.f / 250.f, 8.f, 3.2049);
+    population = pow(population, 2.f);
+    population = smoothstep(0.f, 0.8, population);
+
+    vec4 modelposition = vec4(vs_Pos.x, height, vs_Pos.z, 1.0);
+    modelposition = u_Model * modelposition;
+    gl_Position = u_ViewProj * modelposition;
 }

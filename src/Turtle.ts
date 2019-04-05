@@ -4,6 +4,7 @@ import {radians} from './globals';
 class Turtle {
   position: vec2 = vec2.create();
   orientation: vec2 = vec2.create();
+  bPos: vec3 = vec3.create();
   color: vec4 = vec4.fromValues(0, 0, 0, 1);
   scale: number = 1;
 
@@ -12,6 +13,7 @@ class Turtle {
   copy(t : Turtle) {
     this.position = vec2.clone(t.position);
     this.orientation = vec2.clone(t.orientation);
+    this.bPos = vec3.clone(t.bPos);
     this.color = vec4.clone(t.color);
     this.scale = t.scale;
     return this;
@@ -31,10 +33,18 @@ class Turtle {
 
   getTransform(dist: number) : mat4 {
     let q: quat = quat.create();
-    quat.rotationTo(q, vec3.fromValues(0, 1, 0), vec3.fromValues(this.orientation[0], this.orientation[1], 0));
+    quat.rotationTo(q, vec3.fromValues(0, 0, 1), vec3.fromValues(this.orientation[0], 0, this.orientation[1]));
     let target : mat4 = mat4.create();
-    mat4.fromRotationTranslationScale(target, q, vec3.fromValues(this.position[0], this.position[1], 0), 
-      vec3.fromValues(this.scale, dist, 1));
+    mat4.fromRotationTranslationScale(target, q, vec3.fromValues(this.position[0], 1, this.position[1]), 
+      vec3.fromValues(this.scale, 0.01, dist));
+    return target;
+  }
+
+  getBTransform(dist: number) : mat4 {
+    let q: quat = quat.create();
+    quat.identity(q);
+    let target : mat4 = mat4.create();
+    mat4.fromRotationTranslationScale(target, q, this.bPos, vec3.fromValues(this.scale, dist, this.scale));
     return target;
   }
 };
